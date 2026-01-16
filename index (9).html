@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Forex ADX Dashboard</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#007BFF">
+<style>
+  body {
+    font-family: Arial, sans-serif;
+    background: #f4f6f8;
+    margin: 0;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  h1 {
+    margin-bottom: 20px;
+    text-align: center;
+    color: #007BFF;
+  }
+  .dashboard {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 15px;
+    width: 100%;
+    max-width: 800px;
+  }
+  .card {
+    background: #fff;
+    border-radius: 16px;
+    padding: 20px;
+    box-shadow: 0 6px 15px rgba(0,0,0,0.1);
+    text-align: center;
+    transition: transform 0.2s, box-shadow 0.2s;
+  }
+  .card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 12px 20px rgba(0,0,0,0.15);
+  }
+  .pair {
+    font-weight: bold;
+    color: #333;
+    margin-bottom: 10px;
+    font-size: 1.1em;
+  }
+  .adx-value {
+    font-size: 2em;
+    font-weight: bold;
+    color: #007BFF;
+  }
+</style>
+</head>
+<body>
+
+<h1>Live Forex ADX Dashboard</h1>
+
+<div class="dashboard" id="dashboard"></div>
+
+<script>
+const apiKey = '75e9efffbff34275b7c01aba889461e8'; // Tumar TwelveData API key
+const interval = '1min';
+const period = 14;
+const pairs = [
+  'EUR/USD', 'GBP/USD', 'USD/JPY', 'AUD/USD', 'USD/CHF',
+  'NZD/USD', 'EUR/GBP', 'EUR/JPY', 'GBP/JPY', 'AUD/JPY'
+];
+
+const dashboard = document.getElementById('dashboard');
+pairs.forEach(pair => {
+  const card = document.createElement('div');
+  card.className = 'card';
+  card.innerHTML = `
+    <div class="pair">${pair}</div>
+    <div class="adx-value" id="${pair.replace('/','')}-adx">Loading...</div>
+  `;
+  dashboard.appendChild(card);
+});
+
+function trueRange(prevClose, high, low) {
+    return Math.max(high - low, Math.abs(high - prevClose), Math.abs(low - prevClose));
+}
+
+function calculateADX(data, period) {
+    if(data.length < period + 1) return null;
+    let plusDM = [], minusDM = [], tr = [];
+    for(let i=1; i<data.length; i++){
+        let upMove = data[i].high - data[i-1].high;
+        let downMove = data[i-1].low - data[i].low;
+        plusDM.push((upMove > downMove && upMove > 0) ? upMove : 0);
+        minusDM.push((downMove > upMove && downMove > 0) ? downMove : 0);
+        tr.push(trueRange(data[i-1].close, data[i].high, data[i].low));
+    }
+    let smoothTR = [tr.slice(0, period).reduce((a,b)=>a+b,0)];
+    let smoothPlus = [plusDM.slice(0, period).reduce((a,b)=>a+b,0)];
+    let smoothMinus = [minusDM.slice(0, period).reduce((a,b)=>a+b,0)];
+    for(let i=period; i<tr.length; i++){
+        smoothTR.push(smoothTR[smoothTR.length-1] - smoothTR[smoothTR.length-1]/period + tr[i]);
+        smoothPlus.push(smoothPlus[smoothPlus.length-1] - smoothPlus[smoothPlus.length-1]/period + plusDM[i]);
+        smoothMinus.push(smoothMinus[smoothMinus.length-1] - smoothMinus[smoothMinus.length-1]/period + minusDM[i]);
+    }
+    let dx = smoothPlus.map((p, i) => Math.abs(p - smoothMinus[i]) / smoothTR[i] * 100);
+    let adx = [dx.slice(0, period).reduce((a,b)=>a+b,0)/period];
+    for(let i=period; i<dx.length; i++){
+        adx.push((adx[adx.length-1]*(period-1) + dx[i])/period);
+    }
+    return adx[adx.length-1].toFixed(2);
+}
+
+async function fetchADX(pair){
+    try {
+        const res = await fetch(`https://api.twelvedata.com/time_series?symbol=${pair}&interval=${interval}&outputsize=50&apikey=${apiKey}`);
+        const data = await res.json();
+        if(data.values && data.values.length > period){
+            const ohlc = data.values.reverse().map(v => ({
+                high: parseFloat(v.high),
+                low: parseFloat(v.low),
+                close: parseFloat(v.close)
+            }));
+            const adx = calculateADX(ohlc, period);
+            document.getElementById(pair.replace('/','')+'-adx').innerText = adx;
+        } else {
+            document.getElementById(pair.replace('/','')+'-adx').innerText = 'No data';
+        }
+    } catch(err){
+        console.error(err);
+        document.getElementById(pair.replace('/','')+'-adx').innerText = 'Error';
+    }
+}
+
+function updateAllPairs(){
+    pairs.forEach(pair => fetchADX(pair));
+}
+
+updateAllPairs();
+setInterval(updateAllPairs, 60000);
+
+// Register service worker for offline support
+if('serviceWorker' in navigator){
+    navigator.serviceWorker.register('sw.js').then(()=>console.log('Service Worker registered'));
+}
+</script>
+
+</body>
+</html>
